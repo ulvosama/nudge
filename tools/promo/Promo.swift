@@ -72,45 +72,36 @@ func pick<T>(_ t: Double, _ table: [(Double, T)]) -> T {
 
 // MARK: - Tooltip
 
-struct Tip {
-    let main: String
-    let sub: String
-    let tIn: Double
-    let tOut: Double
+/// One line above the pill that grows a word per mode and keeps the earlier ones:
+/// WATCH → WATCH · AWAKE → … → WATCH · AWAKE · ANSWER · AUTO · QUICK.
+/// The newest word is in full ink and typed in; earlier words drop to muted.
+struct ModeLine {
+    static let words: [(String, Double)] = [("WATCH", 0.24), ("AWAKE", 1.30), ("ANSWER", 2.72), ("AUTO", 5.06), ("QUICK", 7.12)]
+    static let tOut = 8.24
+    static let size: CGFloat = 34
+    static let sep = " · "
 
-    static let mainSize: CGFloat = 34, subSize: CGFloat = 22
-    static let padX: CGFloat = 30, padY: CGFloat = 22, gap: CGFloat = 12
-
-    var box: CGSize {
-        let w = max(Board.width(main, Tip.mainSize), Board.width(sub, Tip.subSize, medium: true) + CGFloat(sub.count))
-        return CGSize(width: w + 2 * Tip.padX,
-                      height: Tip.padY * 2 + Board.lineH(Tip.mainSize) + Tip.gap + Board.lineH(Tip.subSize, medium: true))
-    }
-
-    /// Drawn above the pill, joined to its top edge by a hairline.
     func draw(_ b: Board, _ t: Double, pillTop: CGFloat) {
-        guard t >= tIn, t < tOut + 0.14 else { return }
-        let u = t - tIn
-        let bs = box
+        let start = ModeLine.words[0].1
+        guard t >= start, t < ModeLine.tOut + 0.14 else { return }
+        let on = ModeLine.words.filter { $0.1 <= t }
+        let line = on.map(\.0).joined(separator: ModeLine.sep)
+        let size = ModeLine.size
+        let padX: CGFloat = 30, padY: CGFloat = 22
+        let lh = Board.lineH(size, medium: true)
+        let bs = CGSize(width: Board.width(line, size, medium: true) + CGFloat(line.count) * 2 + 2 * padX, height: lh + 2 * padY)
         let bottom = pillTop - 64
         let r = CGRect(x: (S - bs.width) / 2, y: bottom - bs.height, width: bs.width, height: bs.height)
-        let total = main.count + sub.count
-        var shown = Int.max
-        var boxOn = true
-        var leaderSteps = 6
-        if t >= tOut {                              // switch off: text, then box, then leader
-            let v = t - tOut
-            shown = max(0, total - Int(v * 600))
+
+        var leaderSteps = steps(t - start, from: 0, 0.10, 6)
+        var boxOn = t - start >= 0.10
+        var textOn = true
+        if t >= ModeLine.tOut {                      // switch off: text, then box, then leader
+            let v = t - ModeLine.tOut
+            textOn = false
             boxOn = v < 0.07
             leaderSteps = v < 0.07 ? 6 : max(0, 6 - Int((v - 0.07) / 0.07 * 6))
-        } else {
-            leaderSteps = steps(u, from: 0, 0.10, 6)
-            boxOn = u >= 0.10
-            // main line at 110 chars/s, then the subline at 170 chars/s
-            let um = max(0, u - 0.14), mainDur = Double(main.count) / 110
-            shown = u < 0.14 ? 0 : (um < mainDur ? Int(um * 110) : main.count + Int((um - mainDur) * 170))
         }
-        // leader grows from the pill upward, in steps
         let len = pillTop - bottom
         let h = len * CGFloat(leaderSteps) / 6
         b.fill(CGRect(x: S / 2 - 1, y: pillTop - h, width: 2, height: h), Ink.muted)
@@ -118,35 +109,24 @@ struct Tip {
         guard boxOn else { return }
         b.fillRound(r, 12, Ink.surface)
         b.strokeRound(r, 12, 2, Ink.border)
-        // typewriter with a block cursor cell at the head
-        let mainN = min(main.count, shown)
-        let subN = max(0, min(sub.count, shown - main.count))
-        let tx = r.minX + Tip.padX
-        let my = r.minY + Tip.padY
-        let mw = b.text(String(main.prefix(mainN)), tx, my, Tip.mainSize, Ink.text)
-        let sy = my + Board.lineH(Tip.mainSize) + Tip.gap
-        let sw = b.text(String(sub.prefix(subN)), tx, sy, Tip.subSize, medium: true, Ink.muted, kern: 1)
-        let typing = t < tOut && shown < total
-        if typing {
-            let cw = Board.width("M", Tip.mainSize) * 0.62
-            if mainN < main.count {
-                let lh = Board.lineH(Tip.mainSize)
-                b.fill(CGRect(x: tx + mw + 2, y: my + lh * 0.18, width: cw, height: lh * 0.64), Ink.text)
-            } else {
-                let lh = Board.lineH(Tip.subSize, medium: true)
-                b.fill(CGRect(x: tx + sw + 2, y: sy + lh * 0.18, width: cw * 0.66, height: lh * 0.64), Ink.muted)
-            }
+
+        // Earlier words muted, the newest typed in at 40 chars/s with a block cursor.
+        let newest = on.last!
+        let typed = min(newest.0.count, max(0, Int((t - newest.1 - 0.06) * 40)))
+        let head = on.dropLast().map(\.0).map { $0 + ModeLine.sep }.joined()
+        var x = r.minX + padX
+        let y = r.minY + padY
+        guard textOn else { return }
+        x += b.text(head, x, y, size, medium: true, Ink.muted, kern: 2)
+        x += b.text(String(newest.0.prefix(typed)), x, y, size, medium: true, Ink.text, kern: 2)
+        if t < ModeLine.tOut && typed < newest.0.count {
+            let cw = Board.width("M", size) * 0.62
+            b.fill(CGRect(x: x + 2, y: y + lh * 0.18, width: cw, height: lh * 0.64), Ink.text)
         }
     }
 }
 
-let tips = [
-    Tip(main: "Watches every Claude Code session", sub: "WORKING · ASKS · YOUR TURN", tIn: 0.24, tOut: 1.12),
-    Tip(main: "Keeps your Mac awake while Claude works", sub: "EYE = AWAKE", tIn: 1.30, tOut: 2.46),
-    Tip(main: "Answer from the pill", sub: "⌘↩ ALLOW · ESC → TERMINAL", tIn: 2.72, tOut: 4.84),
-    Tip(main: "Auto-approve — unlocked only with Touch ID", sub: "UP TO 24 H", tIn: 5.06, tOut: 6.84),
-    Tip(main: "Quick mode: approved in under a second", sub: "BOLT = QUICK", tIn: 7.12, tOut: 8.24),
-]
+let modeLine = ModeLine()
 
 // MARK: - Scene
 
@@ -319,7 +299,7 @@ func render(_ b: Board, _ t: Double) {
         pill.draw(b, x: px, y: py, k: K, lw: 3)
         b.ctx.restoreGState()
     }
-    for tip in tips { tip.draw(b, t, pillTop: py) }
+    modeLine.draw(b, t, pillTop: py)
     drawCard(b, t, pillBottom: py + ps.height)
     drawFingerprint(b, t, pillBottom: py + ps.height)
     drawEndCard(b, t)
