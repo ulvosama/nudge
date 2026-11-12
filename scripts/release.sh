@@ -33,7 +33,7 @@ ditto -c -k --keepParent "$APP" "$OUT/Nudge-$V.zip"
 STAGE="$(mktemp -d)"; cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
 if [ -f docs/dmg-background.tiff ]; then mkdir "$STAGE/.background"; cp docs/dmg-background.tiff "$STAGE/.background/bg.tiff"; fi
 RW="$OUT/rw.dmg"
-hdiutil create -volname Nudge -srcfolder "$STAGE" -ov -format UDRW "$RW" >/dev/null
+hdiutil create -volname Nudge -fs HFS+ -srcfolder "$STAGE" -ov -format UDRW "$RW" >/dev/null
 DEV=$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk '/Apple_HFS/ {print $1}')
 if [ -f docs/dmg-background.tiff ]; then
   # Window layout: needs Finder automation permission the first time.
