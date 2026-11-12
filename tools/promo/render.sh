@@ -11,7 +11,8 @@ BIN="${TMPDIR:-/tmp}/nudge-promo-build"
 mkdir -p "$BIN" "$OUT"
 swiftc -O -swift-version 5 -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   "$ROOT/src/Theme.swift" "$ROOT/src/Matrix.swift" \
-  "$ROOT/tools/brand/Kit.swift" "$ROOT/tools/promo/Promo.swift" -o "$BIN/promo"
+  "$ROOT/tools/brand/Kit.swift" "$ROOT/tools/promo/Promo.swift" \
+  "$ROOT/tools/promo/Desktop.swift" "$ROOT/tools/promo/Flood.swift" -o "$BIN/promo"
 export NUDGE_FONTS="$ROOT/Resources/Fonts"
 
 # Video: raw sRGB frames → H.264, BT.709 limited range, tagged.

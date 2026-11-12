@@ -6,6 +6,8 @@ import SwiftUI
 //
 //   promo video            raw RGBA frames on stdout (600 frames) for ffmpeg
 //   promo still <t> <png>  one frame at time t (seconds)
+//   promo desktop / still-desktop  the 15 s desktop story (tools/promo/Desktop.swift)
+//   promo flood / still-flood      the 21 s "hundreds of questions" story (tools/promo/Flood.swift)
 //   promo gif              raw RGBA 600×200 frames on stdout, 25 fps × 2 s, for the README GIF
 //
 // Motion rules: cells and characters switch on/off on frame steps. Nothing fades, blurs,
@@ -333,6 +335,26 @@ struct PromoMain {
             let b = Board(width: 600, height: 200)
             for f in 0..<50 {
                 renderGif(b, Double(f) / 25)
+                out.write(Data(b.bytes))
+            }
+        case "still-desktop":
+            let b = Board(width: DW, height: DH)
+            renderDesktop(b, Double(args[2])!)
+            b.png(args[3])
+        case "desktop":
+            let b = Board(width: DW, height: DH)
+            for f in 0..<DFRAMES {
+                renderDesktop(b, Double(f) / Double(FPS))
+                out.write(Data(b.bytes))
+            }
+        case "still-flood":
+            let b = Board(width: DW, height: DH)
+            renderFlood(b, Double(args[2])!)
+            b.png(args[3])
+        case "flood":
+            let b = Board(width: DW, height: DH)
+            for f in 0..<FFRAMES {
+                renderFlood(b, Double(f) / Double(FPS))
                 out.write(Data(b.bytes))
             }
         case "fingerprint":
