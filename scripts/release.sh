@@ -30,35 +30,7 @@ xcrun stapler staple "$APP"
 rm "$OUT/notarize.zip"
 ditto -c -k --keepParent "$APP" "$OUT/Nudge-$V.zip"
 
-STAGE="$(mktemp -d)"; cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
-if [ -f docs/dmg-background.tiff ]; then mkdir "$STAGE/.background"; cp docs/dmg-background.tiff "$STAGE/.background/bg.tiff"; fi
-RW="$OUT/rw.dmg"
-hdiutil create -volname Nudge -fs HFS+ -srcfolder "$STAGE" -ov -format UDRW "$RW" >/dev/null
-DEV=$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk '/Apple_HFS/ {print $1}')
-if [ -f docs/dmg-background.tiff ]; then
-  # Window layout: needs Finder automation permission the first time.
-  osascript <<OSA || echo "(Finder layout skipped)"
-tell application "Finder"
-  tell disk "Nudge"
-    open
-    set current view of container window to icon view
-    set toolbar visible of container window to false
-    set statusbar visible of container window to false
-    set the bounds of container window to {200, 120, 860, 520}
-    set opts to the icon view options of container window
-    set arrangement of opts to not arranged
-    set icon size of opts to 112
-    set background picture of opts to file ".background:bg.tiff"
-    set position of item "Nudge.app" of container window to {165, 200}
-    set position of item "Applications" of container window to {495, 200}
-    close
-  end tell
-end tell
-OSA
-fi
-sync; hdiutil detach "$DEV" >/dev/null
-hdiutil convert "$RW" -format UDZO -o "$OUT/Nudge-$V.dmg" >/dev/null; rm -f "$RW"; rm -rf "$STAGE"
-codesign --force --sign "$NUDGE_SIGN_ID" --timestamp "$OUT/Nudge-$V.dmg"
+scripts/make-dmg.sh "$APP" "$OUT/Nudge-$V.dmg" "$NUDGE_SIGN_ID"
 xcrun notarytool submit "$OUT/Nudge-$V.dmg" --keychain-profile "$PROFILE" --wait
 xcrun stapler staple "$OUT/Nudge-$V.dmg"
 spctl -a -t open --context context:primary-signature -vv "$OUT/Nudge-$V.dmg"

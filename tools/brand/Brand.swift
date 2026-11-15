@@ -3,7 +3,7 @@ import SwiftUI
 
 // Renders Nudge's static brand PNGs into the directory given as the first argument.
 //   social-preview.png        1280×640   GitHub social card
-//   dmg-background.png        660×400    (1x) and dmg-background@2x.png 1320×800
+//   dmg-background.png        1400×1000  (1x) and dmg-background@2x.png 2800×2000 (layout in the top-left 660×400)
 //   readme-hero.png           1600×900   pill + open permission card
 //   icon-16.png, icon-32.png  small app icon variants (+ icon-16@2x.png = the 32 px drawing)
 
@@ -59,10 +59,18 @@ struct BrandMain {
         return b
     }
 
-    /// Finder places the app icon at (165, 200) and the Applications link at (495, 200), 128 pt icons.
+    /// Finder places the app icon at (165, 200) and the Applications link at (495, 200), 112 pt icons.
+    /// The layout is 660×400 from the top-left, but the canvas runs on in the same dark surface:
+    /// Finder may open the window larger (toolbar, path bar, its own minimum size) and fills
+    /// anything past the picture with white.
     static func dmgBackground(scale: CGFloat) -> Board {
-        let b = Board(width: 660, height: 400, scale: scale)
+        let b = Board(width: 1400, height: 1000, scale: scale)
         b.clear(Ink.surface)
+        // Finder draws icon names in dark text over any background picture, whatever the
+        // appearance, so each name sits on a light tag (112 pt icons: name centred ~74 pt below).
+        for cx in [CGFloat(165), 495] {
+            b.fillRound(CGRect(x: cx - 56, y: 200 + 63, width: 112, height: 21), 3, Ink.text)
+        }
         // receipt header
         b.text("NUDGE", 24, 22, 11, medium: true, Ink.muted, kern: 0.5)
         let ver = "INSTALL"
