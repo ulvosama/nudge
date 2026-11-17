@@ -23,8 +23,8 @@ let CARD_K: CGFloat = 2.05      // permission card scale
 
 enum Eye {
     static let open = MatrixFrames.eye.still
-    static let half = [".......", ".#####.", "#..#..#", ".#####.", "......."]
-    static let closed = [".......", ".......", "#######", ".......", "......."]
+    static let half = MatrixFrames.eyeHalf
+    static let closed = MatrixFrames.eyeClosed
 }
 
 /// Check cells in stroke order (row, col): short arm down, long arm up.

@@ -486,6 +486,63 @@ func check(_ name: String, _ ok: Bool, _ detail: @autoclosure () -> String = "")
     // ---- B12 attach script quoting
     check("B12 shell quoting", shellQuote("a\"$(x)'b") == "'a\"$(x)'\\''b'")
 
+    // ---- B13 first run: bottom-right, Hello, then Welcome; login item; Welcome icons
+    let d = UserDefaults.standard
+    for k in ["anchorX", "anchorY", "pinRight", "pinBottom", "x", "y"] { d.removeObject(forKey: k) }
+    let first = Store(); first.loadAnchor()
+    let vis = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+    check("B13a first spot is bottom-right, card opens above", first.pinRight && first.pinBottom
+          && first.anchor.x == vis.maxX - 12 && first.anchor.y == vis.minY + 12, "\(first.anchor)")
+    d.removeObject(forKey: "helloDone"); d.removeObject(forKey: "welcomeDone"); d.removeObject(forKey: "hooksOptOut")
+    try? fm.removeItem(at: settings)
+    check("B13b fresh install greets", Store.greets(HookInstaller.launchAction()))
+    check("B13c set up before: no hello", !Store.greets(.refresh) && !Store.greets(.none))
+    clearAll()
+    var welcomed = 0
+    store.onHelloDone = { welcomed += 1 }
+    store.startAuto(hours: 1, questions: true, quick: true)
+    store.showHello()
+    store.reload(); store.reload()
+    check("B13d hello shows as the current ask and survives polling",
+          store.current?.kind == .hello && store.asks.filter { $0.kind == .hello }.count == 1)
+    check("B13e hello is never auto-answered", store.asks.first.map { !store.autoHandles($0) && !store.quiet($0) } == true)
+    check("B13f pill says HELLO", ChipState(store).kind == .hello && ChipState(store).word == "HELLO")
+    store.openCurrent()
+    check("B13g ⌘O does nothing to hello", store.helloPending && welcomed == 0)
+    store.choose(0)
+    let respFiles = (try? fm.contentsOfDirectory(atPath: root + "/responses")) ?? []
+    check("B13h ⌘↩ yes: hello gone, remembered, Welcome next, nothing written",
+          !store.helloPending && !store.asks.contains { $0.kind == .hello } && d.bool(forKey: "helloDone")
+          && welcomed == 1 && respFiles.isEmpty, "\(respFiles)")
+    check("B13i greeted once only", !Store.greets(.welcome))
+    store.reload()
+    check("B13j stays gone after polling", !store.asks.contains { $0.kind == .hello })
+    store.stopAuto()
+    d.removeObject(forKey: "helloDone")
+    store.showHello(); store.escape()
+    check("B13k esc also finishes hello", !store.helloPending && d.bool(forKey: "helloDone"))
+    d.removeObject(forKey: "helloDone"); d.removeObject(forKey: "welcomeDone")
+
+    d.removeObject(forKey: "loginOptOut")
+    check("B13l login item registers from /Applications", LoginItem.shouldRegister(bundlePath: "/Applications/Nudge.app"))
+    check("B13m not from a build folder or DMG", !LoginItem.shouldRegister(bundlePath: "/Volumes/Nudge/Nudge.app"))
+    LoginItem.optedOut = true
+    check("B13n turning it off sticks", !LoginItem.shouldRegister(bundlePath: "/Applications/Nudge.app"))
+    d.removeObject(forKey: "loginOptOut")
+
+    let mA = MatrixFrames.bolt.still, mB = ["......."] + MatrixFrames.check.still
+    let m = MatrixFrames.morph(mA, mB, steps: 5)
+    func diff(_ x: [String], _ y: [String]) -> Int { zip(x, y).map { zip($0, $1).filter { $0 != $1 }.count }.reduce(0, +) }
+    let total = diff(mA, mB)
+    check("B13o morph ends on the target, in even steps", m.count == 5 && m.last == mB
+          && zip([mA] + m, m).allSatisfy { diff($0, $1) <= (total + 4) / 5 && diff($0, $1) > 0 })
+    func even(_ f: MatrixFrames) -> Bool {
+        let w = f.still.first?.count ?? 0
+        return (f.frames + [f.still]).allSatisfy { g in g.count == f.still.count && g.allSatisfy { $0.count == w } }
+    }
+    check("B13p eye, auto and bubble grids are rectangular and sized like their stills",
+          even(.eyeLook) && even(.autoMorph) && even(.bubble) && MatrixFrames.eyeLook.frames.contains(MatrixFrames.eyeClosed))
+
     try? fm.removeItem(atPath: root)
     print("\nSuite B: \(passed)/\(passed + failed) passed")
     exit(failed == 0 ? 0 : 1)

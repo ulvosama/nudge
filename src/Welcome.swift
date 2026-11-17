@@ -8,6 +8,8 @@ final class WelcomeModel: ObservableObject {
     @Published var step = 0
     @Published var problem: String?
     @Published var installed = false
+    @Published var loginOn = false
+    @Published var loginNeedsApproval = false
 }
 
 final class WelcomeWindow: NSObject, NSWindowDelegate {
@@ -23,12 +25,15 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
             settingsPath: Paths.claudeSettings.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"),
             onAddHooks: { [weak self] in self?.addHooks() },
             onSkip: { [weak self] in self?.skip() },
-            onDone: { [weak self] in self?.window.close() }), delegate: self)
+            onDone: { [weak self] in self?.window.close() },
+            onLoginSettings: { LoginItem.openSettings() }), delegate: self)
     }
 
     func show() {
         model.installed = HookInstaller.isInstalled
         model.problem = store?.hookProblem
+        model.loginOn = LoginItem.isEnabled
+        model.loginNeedsApproval = LoginItem.needsApproval
         // Already set up (opened again from the menu): start at the shortcuts.
         model.step = model.installed ? 2 : 0
         NSApp.activate(ignoringOtherApps: true)
@@ -60,6 +65,7 @@ struct WelcomeView: View {
     let onAddHooks: () -> Void
     let onSkip: () -> Void
     let onDone: () -> Void
+    let onLoginSettings: () -> Void
     @Environment(\.colorSchemeContrast) private var contrast
 
     static let width: CGFloat = 340
@@ -82,7 +88,7 @@ struct WelcomeView: View {
                 }
             }
             .padding(.top, 6)
-            .frame(minHeight: 170, alignment: .topLeading)
+            .frame(minHeight: 219, alignment: .topLeading)   // the tallest step (3, with the Login Items line)
             Hairline()
             HStack(spacing: 4) {
                 Spacer()
@@ -120,8 +126,8 @@ struct WelcomeView: View {
                 .font(Theme.mono(12)).foregroundStyle(p.muted)
                 .fixedSize(horizontal: false, vertical: true)
             FeatureRow(frames: .breathe, ink: p.text, text: "WORKING / ASKS / YOUR TURN at a glance")
-            FeatureRow(frames: .eye, ink: p.text, text: "Keeps the Mac awake while Claude works")
-            FeatureRow(frames: .check, ink: p.text, text: "Auto-approve, only after Touch ID")
+            FeatureRow(frames: .eyeLook, ink: p.text, text: "Keeps the Mac awake while Claude works")
+            FeatureRow(frames: .autoMorph, ink: p.text, text: "Auto-approve, only after Touch ID")
         }
     }
 
@@ -157,6 +163,13 @@ struct WelcomeView: View {
             ShortcutRow(label: "Answer in the terminal", keys: "Esc")
             ShortcutRow(label: "Jump to the question", keys: "⌃⌥J")
             ShortcutRow(label: "Menu", keys: "right-click")
+            if model.loginNeedsApproval {
+                TextAction(title: "Allow Nudge in Login Items", primary: true, action: onLoginSettings)
+                    .padding(.leading, -6)
+                    .padding(.top, 2)
+            } else if model.loginOn {
+                Text("Opens at login.").font(Theme.mono(11)).foregroundStyle(p.muted).padding(.top, 4)
+            }
         }
     }
 }
@@ -178,12 +191,14 @@ private struct StepDots: View {
 
 private struct FeatureRow: View {
     let frames: MatrixFrames
+    var pitch: CGFloat = 2
+    var cell: CGFloat = 1.5
     let ink: Color
     let text: String
     @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
         HStack(spacing: 10) {
-            MatrixView(frames: frames, ink: ink, pitch: 2, cell: 1.5).frame(width: 16)
+            MatrixView(frames: frames, ink: ink, pitch: pitch, cell: cell).frame(width: 16)
             Text(text).font(Theme.mono(12)).foregroundStyle(Palette.current(contrast).text)
         }
     }

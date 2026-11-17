@@ -56,7 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !sandbox {
             Paths.secureRoot()
             if Installer.offerMoveToApplications() { return }
-            LoginItem.enableOnFirstRunFromApplications()
+            LoginItem.ensureEnabled()
+            store.loginOn = LoginItem.isEnabled
         }
 
         panel = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: 60, height: 44),
@@ -91,10 +92,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.start()
 
         // Hooks: refresh them if you already said yes; ask first otherwise (Welcome).
-        if !sandbox || ProcessInfo.processInfo.environment["NUDGE_WELCOME"] != nil {
-            switch HookInstaller.launchAction() {
+        // A fresh install says hello first: the pill asks "Can you see me?", then Welcome opens.
+        let env = ProcessInfo.processInfo.environment
+        if !sandbox || env["NUDGE_WELCOME"] != nil || env["NUDGE_HELLO"] != nil {
+            let action = HookInstaller.launchAction()
+            switch action {
             case .refresh: store.hookProblem = HookInstaller.install()
-            case .welcome: store.showWelcome()
+            case .welcome:
+                if Store.greets(action) || env["NUDGE_HELLO"] != nil {
+                    store.onHelloDone = { [weak self] in self?.store.showWelcome() }
+                    store.showHello()
+                } else {
+                    store.showWelcome()
+                }
             case .none: break
             }
         }
@@ -209,7 +219,7 @@ struct AskQuestion: Equatable {
 /// One thing waiting on you. Held items are PermissionRequests the helper is holding for Nudge
 /// to answer; observed items are dialogs already showing in a terminal.
 struct AskItem: Identifiable, Equatable {
-    enum Kind: Equatable { case permission, questions, observed }
+    enum Kind: Equatable { case permission, questions, observed, hello }
 
     let id: String
     let session: Session
@@ -251,6 +261,16 @@ struct AskItem: Identifiable, Equatable {
                        created: r["nudge_created"] as? Double ?? Date().timeIntervalSince1970, tool: tool,
                        body: body, questions: questions,
                        rememberLabel: ruleLabel(r["permission_suggestions"]), held: true, request: raw)
+    }
+
+    /// First run: Nudge's own "Can you see me?", answered like a real ask but local only
+    /// (no request file, so nothing is ever written back, and auto-approval never touches it).
+    static let helloID = "nudge-hello"
+    static func hello(created: Double = Date().timeIntervalSince1970) -> AskItem {
+        let proc = ClaudeProc(["pid": 0, "sessionId": helloID, "name": "Nudge", "cwd": ""])!
+        return AskItem(id: helloID, session: Session(proc: proc, detail: nil, status: .asking), kind: .hello,
+                       created: created, tool: "", body: "Can you see me?", questions: [], rememberLabel: nil,
+                       held: true, request: Data())
     }
 
     static func observed(_ s: Session) -> AskItem {
@@ -307,6 +327,10 @@ final class Store: ObservableObject {
 
     /// Observed asks you chose "Later" for (held ones can't wait: Claude is paused on them).
     @Published var laterIDs = Set<String>()
+    /// First run: the Hello ask is showing. Answering it runs `onHelloDone` (the Welcome window).
+    @Published var helloPending = false
+    var helloCreated = Date().timeIntervalSince1970
+    var onHelloDone: (() -> Void)?
     @Published var selection: Int?
 
     @Published var soundOn: Bool = UserDefaults.standard.object(forKey: "soundOn") as? Bool ?? true {
@@ -361,7 +385,7 @@ final class Store: ObservableObject {
     /// them. `anchor` is that corner in screen coordinates; only a drag changes it.
     @Published var pinRight = true
     @Published var pinBottom = false
-    private var anchor = NSPoint.zero
+    private(set) var anchor = NSPoint.zero
     private var timer: Timer?
     private var announced = Set<String>()
     private var wasBusy: [String: Bool] = [:]
@@ -514,6 +538,7 @@ final class Store: ObservableObject {
             if $0.held != $1.held { return $0.held }
             return $0.created < $1.created
         }
+        if helloPending { items.insert(.hello(created: helloCreated), at: 0) }
 
         // New asks: sound + VoiceOver announcement, once each.
         // Quick auto-approval answers silently: no sound, no card, just APPROVING on the chip.
@@ -744,7 +769,31 @@ final class Store: ObservableObject {
             }
         case .observed:
             if n == 0 || n == 1 { openSession(item.session) }
+        case .hello:
+            if n == 0 || n == 1 { finishHello() }
         }
+    }
+
+    /// First run: show the Hello ask now (the pill in its first spot, the screen dimmed).
+    func showHello() {
+        helloCreated = Date().timeIntervalSince1970
+        helloPending = true
+        reload()
+        select(AskItem.helloID)
+        updateLock()
+    }
+
+    /// "Yes!" (or Esc): Hello is done for good; carry on with the launch (the Welcome window).
+    func finishHello() {
+        guard helloPending else { return }
+        helloPending = false
+        UserDefaults.standard.set(true, forKey: "helloDone")
+        asks.removeAll { $0.id == AskItem.helloID }
+        select(visibleAsks.first?.id)
+        updateLock()
+        let next = onHelloDone
+        onHelloDone = nil
+        next?()
     }
 
     private func startDraft(_ mode: Draft) {
@@ -796,6 +845,7 @@ final class Store: ObservableObject {
     func escape() {
         if draftMode != nil { draftMode = nil; draft = ""; return }
         guard let item = current else { return }
+        if item.kind == .hello { finishHello(); return }
         if item.held { respond(item, ["action": "handoff", "reason": "esc_in_nudge"]) } else { later(item) }
     }
 
@@ -807,7 +857,7 @@ final class Store: ObservableObject {
 
     /// ⌘O: jump to the session; a held question goes back to its terminal dialog first.
     func openCurrent() {
-        guard let item = current else { return }
+        guard let item = current, item.kind != .hello else { return }
         if item.held { respond(item, ["action": "handoff", "reason": "opened_terminal"]) }
         openSession(item.session)
     }
@@ -825,7 +875,8 @@ final class Store: ObservableObject {
     // MARK: Lock and keys
 
     private func updateLock() {
-        let want = lockOn && holdOn && visibleAsks.contains { $0.held && !autoHandles($0) }
+        // Hello always dims the screen: it's how you first learn where Nudge asks.
+        let want = helloPending || (lockOn && holdOn && visibleAsks.contains { $0.held && !autoHandles($0) })
         if want != locked {
             locked = want
             onLockChange?(want)
@@ -1061,10 +1112,17 @@ final class Store: ObservableObject {
             setAnchor(from: NSRect(x: d.double(forKey: "x"), y: d.double(forKey: "y") - 44, width: 60, height: 44))
             d.removeObject(forKey: "x"); d.removeObject(forKey: "y")
         } else {
+            // First run: bottom-right, where it's easy to spot and out of the way. Dragging it
+            // saves the new spot (setAnchor), and it stays there.
             let v = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            anchor = NSPoint(x: v.maxX - 12, y: v.maxY - 12)
-            pinRight = true; pinBottom = false
+            anchor = NSPoint(x: v.maxX - 12, y: v.minY + 12)
+            pinRight = true; pinBottom = true
         }
+    }
+
+    /// Hello on a fresh install only: never set up before, never greeted.
+    static func greets(_ action: HookInstaller.LaunchAction) -> Bool {
+        action == .welcome && !UserDefaults.standard.bool(forKey: "helloDone")
     }
 
     private func setAnchor(from f: NSRect) {
@@ -1171,6 +1229,7 @@ final class Store: ObservableObject {
     }
 
     func toggleLogin() {
+        LoginItem.optedOut = loginOn          // turning it off sticks; turning it on clears that
         LoginItem.set(!loginOn)
         loginOn = LoginItem.isEnabled
     }
@@ -1227,7 +1286,7 @@ struct RootView: View {
 
 /// What the chip shows. State is a shape + motion + word; orange only for "asks".
 struct ChipState {
-    enum Kind: Hashable { case none, ready, working, approving, asks(moving: Bool), done }
+    enum Kind: Hashable { case none, ready, working, approving, asks(moving: Bool), done, hello }
     let kind: Kind
     /// Mode icons after the word: Awake (eye), Auto (check) or Auto-quick (bolt).
     enum Icon: Hashable { case awake, auto, quick }
@@ -1242,7 +1301,11 @@ struct ChipState {
         let asks = store.openAsks
         let working = store.sessions.filter { $0.status == .working }
         let done = store.sessions.filter { $0.status == .done }
-        if let first = asks.first {
+        if store.helloPending {
+            kind = .hello
+            base = "HELLO"
+            label = "Nudge. Can you see me?"
+        } else if let first = asks.first {
             kind = .asks(moving: !store.visibleAsks.isEmpty)
             base = "ASKS"
             count = asks.count > 1 ? " · \(asks.count)" : ""
@@ -1353,6 +1416,7 @@ struct Chip: View {
         case .asks(let moving): MatrixView(frames: .orbit, animate: moving, ink: p.orange)
         case .approving: MatrixView(frames: .chase, ink: p.orange, pitch: 4, cell: 3)
         case .done: StampView(ink: p.text, side: 12)
+        case .hello: MatrixView(frames: .bubble, ink: p.orange, pitch: 2, cell: 1.5)
         }
     }
 }
@@ -1398,12 +1462,14 @@ struct AnswerCard: View {
                 Text(item.session.name.uppercased())
                     .font(Theme.mono(11, medium: true)).foregroundStyle(p.muted).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 6)
-                if count > 1 {
+                if count > 1 && item.kind != .hello {
                     Text("\(store.currentIndex + 1) OF \(count)").font(Theme.mono(11, medium: true)).foregroundStyle(p.text)
                 }
             }
-            Text(item.session.name != item.session.project ? "\(item.session.project) · \(time(item.created))" : time(item.created))
-                .font(Theme.mono(11)).foregroundStyle(p.muted).lineLimit(1)
+            if item.kind != .hello {
+                Text(item.session.name != item.session.project ? "\(item.session.project) · \(time(item.created))" : time(item.created))
+                    .font(Theme.mono(11)).foregroundStyle(p.muted).lineLimit(1)
+            }
         }
     }
 
@@ -1438,6 +1504,11 @@ struct AnswerCard: View {
                 TextAction(title: "Later", primary: false) { store.later(item) }
             }
             .padding(.leading, -6)
+        case .hello:
+            Text(item.body).font(Theme.mono(13, medium: true)).foregroundStyle(p.text)
+            Text("Drag me anywhere. I'll stay there.").font(Theme.mono(11)).foregroundStyle(p.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            options(p, [("Yes!", nil)])
         }
     }
 
@@ -1493,6 +1564,8 @@ struct AnswerCard: View {
         let hints: String
         if store.draftMode != nil {
             hints = "↩ send  esc back"
+        } else if item.kind == .hello {
+            hints = "⌘↩ yes"
         } else if !item.held {
             hints = "esc later" + more
         } else {
@@ -2133,10 +2206,30 @@ enum LoginItem {
         if on { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
     }
 
-    static func enableOnFirstRunFromApplications() {
-        let d = UserDefaults.standard
-        guard !d.bool(forKey: "loginSetUp"), Bundle.main.bundlePath.hasPrefix("/Applications/") else { return }
-        set(true)
-        d.set(true, forKey: "loginSetUp")
+    /// You turned "Open at login" off yourself; until then Nudge keeps itself a login item.
+    static var optedOut: Bool {
+        get { UserDefaults.standard.bool(forKey: "loginOptOut") }
+        set { UserDefaults.standard.set(newValue, forKey: "loginOptOut") }
     }
+
+    /// Whether this launch should (re-)register: from /Applications, and you haven't opted out.
+    /// Every launch, not just the first: a reinstall, a moved app or a reset Login Items list
+    /// would otherwise leave Nudge off.
+    static func shouldRegister(bundlePath: String = Bundle.main.bundlePath) -> Bool {
+        !optedOut && bundlePath.hasPrefix("/Applications/")
+    }
+
+    /// macOS wants you to allow it in System Settings → General → Login Items.
+    static var needsApproval: Bool { SMAppService.mainApp.status == .requiresApproval }
+
+    static func ensureEnabled() {
+        guard shouldRegister() else { return }
+        if SMAppService.mainApp.status != .enabled {
+            do { try SMAppService.mainApp.register() } catch { NSLog("Nudge: login item: \(error.localizedDescription)") }
+        }
+        let st = SMAppService.mainApp.status
+        if st != .enabled { NSLog("Nudge: login item status \(st.rawValue)") }
+    }
+
+    static func openSettings() { SMAppService.openSystemSettingsLoginItems() }
 }

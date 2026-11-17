@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- First run: the pill starts bottom-right and says hello ("Can you see me?", ⌘↩ Yes!) with the
+  screen dimmed, then the Welcome window opens. Drag it anywhere and it stays there.
+- Welcome: the eye looks around and blinks, and the bolt turns into the check.
+- Nudge keeps itself a login item on every launch unless you turn "Open at login" off; if macOS
+  needs your approval, the Welcome window links to Login Items.
+
 ## 1.0.0
 
 First public release.

@@ -53,6 +53,52 @@ struct MatrixFrames {
     static let check = MatrixFrames(frames: [], still: [".....##", "....##.", "##.##..", ".###...", "..#...."], period: 0, loops: false)
     static let bolt = MatrixFrames(frames: [], still: ["...###.", "..##...", ".#####.", "...##..", "..##...", ".##...."], period: 0, loops: false)
 
+    /// Eye half-shut and shut (blink), and with the pupil one cell right / left (looking).
+    static let eyeHalf = [".......", ".#####.", "#..#..#", ".#####.", "......."]
+    static let eyeClosed = [".......", ".......", "#######", ".......", "......."]
+    static let eyeRight = ["..###..", ".#...#.", "#...#.#", ".#...#.", "..###.."]
+    static let eyeLeft = ["..###..", ".#...#.", "#.#...#", ".#...#.", "..###.."]
+
+    /// Awake, alive: looks right, looks left, blinks. 4.35 s (29 steps of 0.15 s), loops.
+    static let eyeLook: MatrixFrames = {
+        let o = eye.still
+        func hold(_ g: [String], _ n: Int) -> [[String]] { Array(repeating: g, count: n) }
+        let frames = hold(o, 6) + hold(eyeRight, 6) + hold(o, 2) + hold(eyeLeft, 6) + hold(o, 4)
+            + [eyeHalf, eyeClosed, eyeHalf] + hold(o, 2)
+        return MatrixFrames(frames: frames, still: o, period: Double(frames.count) * 0.15, loops: true)
+    }()
+
+    /// Auto-approve, normal and quick: the bolt turns into the check cell by cell and back.
+    /// 3.0 s (30 steps of 0.1 s), loops. Both grids padded to 7×6 (check gets a blank top row).
+    static let autoMorph: MatrixFrames = {
+        let b = bolt.still, c = ["......."] + check.still
+        func hold(_ g: [String], _ n: Int) -> [[String]] { Array(repeating: g, count: n) }
+        let frames = hold(b, 10) + morph(b, c, steps: 5) + hold(c, 10) + morph(c, b, steps: 5)
+        return MatrixFrames(frames: frames, still: c, period: Double(frames.count) * 0.1, loops: true)
+    }()
+
+    /// Frames 1...steps from `a` to `b` (same size): the differing cells switch top to bottom,
+    /// left to right, an even share per frame. The last frame is `b`.
+    static func morph(_ a: [String], _ b: [String], steps: Int) -> [[String]] {
+        let ga = a.map(Array.init), gb = b.map(Array.init)
+        var diffs: [(Int, Int)] = []
+        for r in ga.indices { for c in ga[r].indices where ga[r][c] != gb[r][c] { diffs.append((r, c)) } }
+        return (1...max(1, steps)).map { i in
+            var g = ga
+            let n = (diffs.count * i + steps - 1) / steps
+            for (r, c) in diffs.prefix(n) { g[r][c] = gb[r][c] }
+            return g.map { String($0) }
+        }
+    }
+
+    /// Hello: a speech bubble whose dots type in (none, one, two, held), on the 7-wide grid of
+    /// the eye, check and bolt so it sits at their size. 1.6 s, loops. Static: both dots.
+    static let bubble: MatrixFrames = {
+        func b(_ dots: String) -> [String] { ["#######", "#.....#", "#" + dots + "#", "#.....#", "#######", ".##...."] }
+        let two = b(".#.#.")
+        return MatrixFrames(frames: [b("....."), b(".#..."), two, two], still: two, period: 1.6, loops: true)
+    }()
+
     /// Resting shapes for the small 3×3 row tiles.
     static let dot = MatrixFrames(frames: [], still: ["ooo", "o#o", "ooo"], period: 0, loops: false)
     static let ring = MatrixFrames(frames: [], still: ["###", "#o#", "###"], period: 0, loops: false)
